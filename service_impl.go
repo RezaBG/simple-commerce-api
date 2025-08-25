@@ -31,7 +31,59 @@ func NewInMemoryService() *InMemoryService {
 }
 
 func (s *InMemoryService) Create(ctx context.Context, o Order, idempotencyKey string) (Order, bool, error) {
-	// TODO: implement this logic
+	// always check context first
+	if err := ctx.Err(); err != nil {
+		return Order{}, false, err
+	}
+
+	// 1. Idempotency "Fast-Path" (read-only lock)
+	if idempotencyKey != "" {
+		s.mu.RLock()
+		if orderID, ok := s.idempo[idempotencyKey]; ok {
+			existing, ok := s.orders[orderID]
+			s.mu.RUnlock() // Release read lock
+
+			if !ok {
+				// This indicates a data consistency issue.
+				return Order{}, false, ErrIdempotency
+			}
+			return cloneOrder(existing), true, nil
+		}
+		s.mu.RUnlock()
+	}
+
+	// 2. Validate input
+	if o.CustomerID == "" || o.Currency == "" || len(o.Lines) == 0 {
+		return Order{}, false, ErrInvalidInput
+	}
+
+	// 3. Build, Enrich, and Calculate
+	now := time.Now().UTC()
+	newOrder := Order{
+		ID:         newID(),
+		CustomerID: o.CustomerID,
+		Currency:   o.Currency,
+		Lines:      make([]OrderLine, len(o.Lines)),
+		Attributes: cloneMap(o.Attributes),
+		Status:     StatusPending,
+		Version:    1,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+
+	var totalCents int64
+	for i, line := range o.Lines {
+		// Also validate the line times themselves
+		if line.Quantity <= 0 || line.UnitPriceCents < 0 {
+			return Order{}, false, ErrInvalidInput
+		}
+		line.LineTotalCents = int64(line.Quantity) * line.UnitPriceCents
+		newOrder.Lines[i] = line
+		totalCents += line.LineTotalCents
+
+	}
+	newOrder.TotalCents = totalCents
+
 	return Order{}, false, nil
 }
 
@@ -50,7 +102,7 @@ func (s *InMemoryService) UpdatedStatus(ctx context.Context, id string, newStatu
 
 // --- Helper functions ---
 
-func NewID() string {
+func newID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return time.Now().UTC().Format("20060102150405.000000")

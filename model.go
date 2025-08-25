@@ -15,8 +15,8 @@ const (
 type OrderLine struct {
 	ProductID      string `json:"product_id"`
 	Quantity       int    `json:"quantity"`
-	UnitPriceCents int    `json:"unit_price_cents"`
-	LineTotalCents int    `json:"line_total_cents"`
+	UnitPriceCents int64  `json:"unit_price_cents"`
+	LineTotalCents int64  `json:"line_total_cents"`
 }
 
 // Order is the main data structure for application
@@ -26,7 +26,7 @@ type Order struct {
 	Currency   string            `json:"currency"`
 	Lines      []OrderLine       `json:"lines"`
 	Attributes map[string]string `json:"attributes,omitempty"`
-	TotalCents int               `json:"total_cents"`
+	TotalCents int64             `json:"total_cents"`
 	Status     OrderStatus       `json:"status"`
 	Version    int64             `json:"version"`
 	CreatedAt  time.Time         `json:"created_at"`
