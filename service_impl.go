@@ -110,7 +110,25 @@ func (s *InMemoryService) Create(ctx context.Context, o Order, idempotencyKey st
 }
 
 func (s *InMemoryService) Get(ctx context.Context, id string, includeDeleted bool) (Order, error) {
-	return Order{}, nil
+	if err := ctxErr(ctx); err != nil {
+		return Order{}, err
+	}
+
+	// Use a read lock for this read-only operation
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Look for the order in the map
+	order, ok := s.orders[id]
+	if !ok {
+		return Order{}, ErrNotFound
+	}
+
+	if order.DeletedAt != nil && !includeDeleted {
+		return Order{}, ErrConflict
+	}
+
+	return cloneOrder(order), nil
 }
 
 func (s *InMemoryService) List(ctx context.Context, opts ListOptions) (ListResult[Order], error) {
