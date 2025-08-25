@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"math/rand"
+	"sort"
 	"sync"
 	"time"
 )
@@ -125,15 +126,84 @@ func (s *InMemoryService) Get(ctx context.Context, id string, includeDeleted boo
 	}
 
 	if order.DeletedAt != nil && !includeDeleted {
-		return Order{}, ErrConflict
+		return Order{}, ErrNotFound
 	}
 
 	return cloneOrder(order), nil
 }
 
 func (s *InMemoryService) List(ctx context.Context, opts ListOptions) (ListResult[Order], error) {
-	// TODO: implement this logic
-	return ListResult[Order]{}, nil
+	if err := ctxErr(ctx); err != nil {
+		return ListResult[Order]{}, err
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// 1. Convert map to slice for filtering and sorting
+	allOrders := make([]Order, 0, len(s.orders))
+	for _, order := range s.orders {
+		allOrders = append(allOrders, order)
+	}
+
+	// 2. Filter the slice based on options
+	filtered := make([]Order, 0)
+	for _, order := range allOrders {
+		if order.DeletedAt != nil {
+			continue
+		}
+		if opts.Status != nil && order.Status != *opts.Status {
+			continue
+		}
+		if opts.CustomerID != nil && order.CustomerID != *opts.CustomerID {
+			continue
+		}
+		if opts.CreateFrom != nil && order.CreatedAt.Before(*opts.CreateFrom) {
+			continue
+		}
+		if opts.CreateTo != nil && order.CreatedAt.After(*opts.CreateTo) {
+			continue
+		}
+		filtered = append(filtered, order)
+	}
+
+	// 3. Sort by creation date, newest first, for consistent pagination
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
+	})
+
+	// 4. Paginate the results
+	totalItems := len(filtered)
+	if opts.Page <= 0 {
+		opts.Page = 1
+	}
+	if opts.PageSize <= 0 {
+		opts.PageSize = 10
+	}
+
+	start := (opts.Page - 1) * opts.PageSize
+	end := start + opts.PageSize
+	if start >= totalItems {
+		return ListResult[Order]{Items: []Order{}, TotalItems: totalItems}, nil
+	}
+	if end > totalItems {
+		end = totalItems
+	}
+	pageItems := filtered[start:end]
+
+	// 5. Build and return the final paginated result with safe copies
+	result := ListResult[Order]{
+		Items:      make([]Order, len(pageItems)),
+		Page:       opts.Page,
+		PageSize:   opts.PageSize,
+		TotalItems: totalItems,
+		TotalPages: (totalItems + opts.PageSize - 1) / opts.PageSize,
+	}
+	for i, order := range pageItems {
+		result.Items[i] = cloneOrder(order)
+	}
+
+	return result, nil
 }
 
 func (s *InMemoryService) UpdatedStatus(ctx context.Context, id string, newStatus OrderStatus, expectedVersion *int64) (Order, error) {
