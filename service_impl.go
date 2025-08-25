@@ -105,9 +105,9 @@ func ctxErr(ctx context.Context) error {
 func isTransitionAllowed(from, to OrderStatus) bool {
 	switch from {
 	case StatusPending:
-		return to == StatusPending || to == StatusCanceled
-	case StatusConfirmed:
 		return to == StatusConfirmed || to == StatusCanceled
+	case StatusConfirmed:
+		return to == StatusShipped || to == StatusCanceled
 	case StatusShipped:
 		return to == StatusDelivered
 	}
