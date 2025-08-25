@@ -84,7 +84,29 @@ func (s *InMemoryService) Create(ctx context.Context, o Order, idempotencyKey st
 	}
 	newOrder.TotalCents = totalCents
 
-	return Order{}, false, nil
+	// 4. Critical section: Lock, double-check idempotency, and save.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Double-check idempotency inside the lock to prevent a race condition
+	if idempotencyKey != "" {
+		if orderID, ok := s.idempo[idempotencyKey]; ok {
+			if existing, ok := s.orders[orderID]; ok {
+				return cloneOrder(existing), true, nil
+			}
+
+			return Order{}, false, ErrIdempotency
+		}
+	}
+
+	// Save the new order
+	s.orders[newOrder.ID] = newOrder
+	if idempotencyKey != "" {
+		s.idempo[idempotencyKey] = newOrder.ID
+	}
+
+	return cloneOrder(newOrder), false, nil
+
 }
 
 func (s *InMemoryService) Get(ctx context.Context, id string, includeDeleted bool) (Order, error) {
